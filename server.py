@@ -1,5 +1,6 @@
-import base64, re, quopri, os, traceback
+import base64, re, quopri, os, logging, traceback
 from datetime import datetime
+from functools import wraps
 
 import html2text
 from mcp.server.fastmcp import FastMCP
@@ -7,7 +8,36 @@ from notmuch import Query, Database
 
 ### Constants ###
 
-NOTMUCH_DATABASE_PATH = "/home/r/ws/notmuch/Mail"
+NOTMUCH_DATABASE_PATH = os.getenv('NOTMUCH_DATABASE_PATH', False)
+LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', False)
+
+### Logging ###
+
+logger = None
+
+if LOG_FILE_PATH:
+    logger = logging.getLogger('function_logger')
+    logger.setLevel(logging.DEBUG)
+    fh = logging.FileHandler(LOG_FILE_PATH)
+    fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(fh)
+
+def log(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not logger:
+            return func(*args, **kwargs)
+
+        try:
+            logger.info(f"Calling {func.__name__} with args={args}, kwargs={kwargs}")
+            result = func(*args, **kwargs)
+            logger.info(f"{func.__name__} returned {result}")
+            return result
+        except Exception as e:
+            logger.error(f"{func.__name__} raised {type(e).__name__}: {str(e)}\n{traceback.format_exc()}")
+            raise
+
+    return wrapper
 
 ### Notmuch API ###
 
@@ -64,10 +94,10 @@ def message_to_text(message):
 
 mcp = FastMCP("Notmuch MCP")
 
-# @mcp.tool(description=f"View all messages in an email thread at the notmuch database at {NOTMUCH_DATABASE_PATH}")
-def xxxxview_email_thread(thread_id: str) -> str:
+@mcp.tool(description=f"View all messages in an email thread at the notmuch database at {NOTMUCH_DATABASE_PATH}")
+@log
+def view_email_thread(thread_id: str) -> str:
     try:
-        os.chdir("/home/r/ws/notmuch")
         db = Database(NOTMUCH_DATABASE_PATH)
         # query = Query(db, 'thread:0000000000005329')
         # query = Query(db, 'thread:00000000000052b1')
@@ -81,58 +111,15 @@ def xxxxview_email_thread(thread_id: str) -> str:
             return "Not found!"
         else:
             return result
-    except Exception as e:
-        return f"Error occured: {NOTMUCH_DATABASE_PATH} {os.getcwd()} - {str(e)} {e.__module__}.{e.__class__.__name__}\n{traceback.format_exc()}"
+    except:
+        raise
     finally:
         try:
             db.close()
-        except:
-            pass
-        try:
             del query
-        except:
-            pass
-        try:
             del db
         except:
             pass
-
-from functools import wraps
-import asyncio
-import traceback
-
-@mcp.tool(description=f"View all messages in an email thread at the notmuch database at {NOTMUCH_DATABASE_PATH}")
-async def view_email_thread(thread_id: str) -> str:
-    def sync_view_thread():
-        try:
-            os.chdir("/home/r/ws/notmuch")
-            db = Database(NOTMUCH_DATABASE_PATH)
-            query = Query(db, f'thread:{thread_id}')
-            query.set_sort(Query.SORT.OLDEST_FIRST)
-            messages = query.search_messages()
-            result = "- - -\n".join([message_to_text(message) for message in messages])
-            if not result:
-                return "Not found!"
-            else:
-                return result
-        except Exception as e:
-            return f"Error occured: {NOTMUCH_DATABASE_PATH} {os.getcwd()} - {str(e)} {e.__module__}.{e.__class__.__name__}\n{traceback.format_exc()}"
-        finally:
-            try:
-                db.close()
-            except:
-                pass
-            try:
-                del query
-            except:
-                pass
-            try:
-                del db
-            except:
-                pass
-
-    # Run the sync function in a thread pool
-    return await asyncio.to_thread(sync_view_thread)
 
 if __name__ == "__main__":
     mcp.run()
