@@ -1,4 +1,4 @@
-import base64, re, quopri, os, logging, traceback, sys, platform
+import base64, re, quopri, os, logging, traceback, sys, platform, json
 from datetime import datetime
 from functools import wraps
 
@@ -41,6 +41,9 @@ def log(func):
 
 ### Notmuch API ###
 
+def fmt_timestamp(timestamp):
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+
 def message_to_text(message):
     def normalize_empty_lines(text):
         return re.sub(r'(\n\s*){2,}', '\n\n', text)
@@ -61,7 +64,7 @@ def message_to_text(message):
             return quopri.decodestring(text.encode('utf-8')).decode('latin1')
 
     from_addr = message.get_header('From').strip()
-    date_str = datetime.fromtimestamp(message.get_date()).strftime("%Y-%m-%d %H:%M:%S")
+    date_str = fmt_timestamp(message.get_date())
 
     result = [f"FROM: {from_addr}", f"DATE: {date_str}"]
     parts = list(message.get_message_parts())
@@ -88,6 +91,32 @@ def message_to_text(message):
 ### MCP Implementation ###
 
 mcp = FastMCP("Notmuch MCP")
+
+@mcp.tool(description=f"Find email threads in the notmuch database at {NOTMUCH_DATABASE_PATH}")
+@log
+def find_email_thread(notmuch_search_query: str) -> str:
+    db = Database(NOTMUCH_DATABASE_PATH)
+    query = Query(db, notmuch_search_query)
+    query.set_sort(Query.SORT.NEWEST_FIRST)
+    threads = query.search_threads()
+
+    result = []
+    for i, thread in enumerate(threads):
+        if i == 25:
+            break
+        parts = [
+            thread.get_thread_id(),
+            fmt_timestamp(thread.get_newest_date()),
+            thread.get_subject()[:80],
+            ",".join([x.split()[0].lower() for x in thread.get_authors().split(",")])[:40],
+        ]
+        result.append("\t".join(parts))
+
+    db.close()
+    del query
+    del db
+
+    return "\n".join(result)
 
 @mcp.tool(description=f"View all messages for an email thread in the notmuch database at {NOTMUCH_DATABASE_PATH}")
 @log
