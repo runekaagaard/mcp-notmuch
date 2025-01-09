@@ -1,4 +1,4 @@
-import base64, re, quopri, os, logging, traceback
+import base64, re, quopri, os, logging, traceback, sys, platform
 from datetime import datetime
 from functools import wraps
 
@@ -8,19 +8,19 @@ from notmuch import Query, Database
 
 ### Constants ###
 
-NOTMUCH_DATABASE_PATH = os.getenv('NOTMUCH_DATABASE_PATH', False)
-LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', False)
+NOTMUCH_DATABASE_PATH = os.environ["NOTMUCH_DATABASE_PATH"]
+REPLY_SEPARATORS = list(os.environ["REPLY_SEPARATORS"].split("|"))
+LOG_FILE_PATH = os.environ.get('LOG_FILE_PATH', False)
 
 ### Logging ###
 
-logger = None
-
 if LOG_FILE_PATH:
     logger = logging.getLogger('function_logger')
-    logger.setLevel(logging.DEBUG)
     fh = logging.FileHandler(LOG_FILE_PATH)
     fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(fh)
+else:
+    logger = None
 
 def log(func):
     @wraps(func)
@@ -40,11 +40,6 @@ def log(func):
     return wrapper
 
 ### Notmuch API ###
-
-REPLY_SEPARATORS = [
-    "* * *", "venlig hilsen", "med venlig hilsen", "med venlig hilse", "mvh", "m.v.h", "de bedste hilsner",
-    "bedste hilsner", "/ tuxen", "på forhånd tak", "på forhånd mange tak", "hilsen "
-]
 
 def message_to_text(message):
     def normalize_empty_lines(text):
@@ -94,32 +89,20 @@ def message_to_text(message):
 
 mcp = FastMCP("Notmuch MCP")
 
-@mcp.tool(description=f"View all messages in an email thread at the notmuch database at {NOTMUCH_DATABASE_PATH}")
+@mcp.tool(description=f"View all messages for an email thread in the notmuch database at {NOTMUCH_DATABASE_PATH}")
 @log
 def view_email_thread(thread_id: str) -> str:
-    try:
-        db = Database(NOTMUCH_DATABASE_PATH)
-        # query = Query(db, 'thread:0000000000005329')
-        # query = Query(db, 'thread:00000000000052b1')
-        query = Query(db, f'thread:{thread_id}')
-        query.set_sort(Query.SORT.OLDEST_FIRST)
-        messages = query.search_messages()
+    db = Database(NOTMUCH_DATABASE_PATH)
+    query = Query(db, f'thread:{thread_id}')
+    query.set_sort(Query.SORT.OLDEST_FIRST)
+    messages = query.search_messages()
+    result = "- - -\n".join([message_to_text(message) for message in messages])
 
-        result = "- - -\n".join([message_to_text(message) for message in messages])
+    db.close()
+    del query
+    del db
 
-        if not result:
-            return "Not found!"
-        else:
-            return result
-    except:
-        raise
-    finally:
-        try:
-            db.close()
-            del query
-            del db
-        except:
-            pass
+    return result
 
 if __name__ == "__main__":
     mcp.run()
